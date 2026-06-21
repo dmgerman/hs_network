@@ -1,0 +1,139 @@
+#+TITLE: hs_network.spoon
+#+AUTHOR: Daniel German
+#+DATE: 2026-06-21
+
+* Overview
+
+=hs_network= tracks network consumption per Wi-Fi SSID (or interface)
+from the moment of connect. It shows a live byte counter in the menu
+bar, keeps cumulative per-network totals, and can fire alerts (or
+turn Wi-Fi off) when consumption crosses configured thresholds.
+
+** Features
+
+- Live session counter (↓in ↑out) in the menu bar
+- Per-SSID cumulative totals that survive Hammerspoon reloads
+- Repeating delta alerts (e.g. every 10 MiB) per network
+- Optional session cap (single absolute threshold) per network
+- Optional auto-disable of Wi-Fi when the cap is reached
+- Global pause toggles: alerts only, or all tracking
+- Per-SSID alert mute
+- TSV event log of every connect / disconnect / alert
+
+** Storage
+
+- =~/.hammerspoon/logs/network.json= — per-SSID totals,
+  thresholds, and pause flags. Survives reload.
+- =~/.hammerspoon/logs/network.log= — append-only TSV event log.
+  Columns: =timestamp=, =network=, =event=, =total=, =delta=.
+
+* Installation
+
+In =init.lua=:
+
+#+BEGIN_SRC lua
+hs.loadSpoon("hs_network")
+spoon.hs_network:start()
+#+END_SRC
+
+To read SSIDs (instead of falling back to =iface:en1=), grant
+Hammerspoon Location Services authorization:
+*System Settings → Privacy & Security → Location Services → Hammerspoon*.
+
+* Menu Bar
+
+The menu bar title shows the current session's bytes, e.g.
+=↓1.2GB ↑45MB=. A prefix indicates state:
+
+| Prefix | Meaning              |
+|--------+----------------------|
+| =⏸=    | Tracking paused      |
+| =🔕=    | All alerts paused    |
+| (none) | Running normally     |
+
+** Dropdown
+
+When connected:
+
+- Network, Session, Cumulative, Alerts summary
+- *Set delta ▸* — None, 10 MiB, 100 MiB, 500 MiB, 1 GiB
+- *Set session cap ▸* — None, 100 MiB, 500 MiB, 1 GiB, 5 GiB
+- *Disable Wi-Fi when cap reached* (checkmark toggle)
+- *Disable / Enable alerts for {SSID}*
+- *Reset session*
+
+Always shown:
+
+- *Pause all alerts* / *Resume all alerts*
+- *Pause tracking* / *Resume tracking*
+- All networks with cumulative totals (=🔕= marks muted networks)
+
+* Defaults
+
+| Setting              | Default            |
+|----------------------+--------------------|
+| Delta alert          | 10 MiB per network |
+| Session cap          | none               |
+| Wi-Fi off on cap     | off                |
+| Polling interval     | 15 seconds         |
+
+The 10 MiB default applies only on the first connect to a network.
+Any user-set value, including "None", is remembered for that network.
+
+* Programmatic API
+
+All toggles are also available from Lua. State changes persist to
+=network.json= automatically.
+
+** Configuration
+
+#+BEGIN_SRC lua
+-- Set the delta and/or session cap for a network. Both fields are
+-- optional. Whatever you pass replaces the previous configuration.
+spoon.hs_network:setThresholds("HomeWiFi", {
+  delta    = 50 * 1024^2,             -- alert every 50 MiB
+  absolute = { 5 * 1024^3 },          -- session cap at 5 GiB
+})
+
+-- Mute alerts for a network (counting continues)
+spoon.hs_network:blacklist("WorkVPN")
+spoon.hs_network:unblacklist("WorkVPN")
+#+END_SRC
+
+** Global Toggles
+
+#+BEGIN_SRC lua
+spoon.hs_network:pauseAlerts()       -- silence all alerts
+spoon.hs_network:resumeAlerts()
+spoon.hs_network:toggleAlerts()
+spoon.hs_network:isAlertsPaused()    -- → boolean
+
+spoon.hs_network:pauseTracking()     -- freeze counters
+spoon.hs_network:resumeTracking()
+spoon.hs_network:toggleTracking()
+spoon.hs_network:isTrackingPaused()  -- → boolean
+#+END_SRC
+
+** Reset
+
+#+BEGIN_SRC lua
+spoon.hs_network:resetSession()          -- zero session counters + alerts
+spoon.hs_network:resetCumulative("SSID") -- zero one SSID's total
+spoon.hs_network:resetCumulative()       -- zero all
+#+END_SRC
+
+** Lifecycle
+
+#+BEGIN_SRC lua
+spoon.hs_network:start()
+spoon.hs_network:stop()
+#+END_SRC
+
+* Notes
+
+- Byte counts come from the kernel via =netstat -ibn= and reflect
+  physical-layer traffic. VPN-tunneled bytes are included.
+- The Wi-Fi auto-disable only fires when the active interface is a
+  Wi-Fi interface; Ethernet sessions skip it silently.
+- Networks with no SSID readout (Location Services not granted, or
+  non-Wi-Fi connections) are identified as =iface:en1= etc.
